@@ -131,7 +131,7 @@ def eval_injectable(name, **kwargs):
     """
     inj = get_injectable(name)
     if inj is not None:
-        return inj()
+        return inj(**kwargs)
     return None
 
 
@@ -206,22 +206,30 @@ def _get_callable(wrapped):
 
 class CallbackWrapper(object):
     """
-    Wraps a callback function...
+    Wraps a callback function...Still trying to work out what I want
+    this do.
 
-    Todo: add update, maybe memoize?
+    Todo: add  memoize? Also can we inherit from FuncWrapper and just
+    overide __call__?
 
-    Does, this need to make notification?
-
-    I'm still not exactly sure what to do with this?
+    Right, now this notifies of changes each time it is collected.
+    Not sure if that is the desired behavior. This would likely be used
+    mostly in steps, so maybe that doesn't matter anyway.
 
     """
 
     def __init__(self, name, wrapped):
         self.name = name
+        self.update(wrapped)
+
+    def update(self, wrapped):
         self.func = _get_callable(wrapped)
+        _notify_changed(self.name)
 
     def __call__(self, **local_kwargs):
-        return self.func
+        f = self.func
+        _notify_changed(self.name)
+        return f
 
 
 def _collect_and_eval(name, func, **local_kwargs):
@@ -274,6 +282,9 @@ class CachedFuncWrapper(FuncWrapper):
         """
         TODO: figure out what to do if we have local_kwargs,
         does this not get applied for cahcing??
+
+        ALSO, think about how this interacts with a global cache
+        (on or off) setting.
 
         """
         if self.data is None:
