@@ -70,7 +70,7 @@ def test_injectables(a_value, my_func, my_func2, my_class):
 
     # check the registration
     injs = ['value_test1', 'func_test1', 'func_test2', 'class_test']
-    for inj in injs:
+    for inj in orca.list_injectables():
         assert inj in injs
 
     # evaluate functions
@@ -97,15 +97,8 @@ def test_callbacks(my_func2):
     """
     For injectables where autocall is False.
 
-    Note right, now get_injectable, returns the
-    injectable itself and not the function. That
-    maybe should change??
-
-    The notion of autocall and callback should probably be
-    refactored into its own class?
-
     """
     orca.clear_all()
     orca.add_injectable('cb_test', my_func2, autocall=False)
-    cb = orca.get_injectable('cb_test')
-    assert cb(func_test1=10) == 20
+    cb = orca.eval_injectable('cb_test')
+    assert cb(10) == 20

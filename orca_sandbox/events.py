@@ -24,9 +24,6 @@ my_event(10)
 my_func(iter_var):
     ...
 
-TODO: make this ordered so that subscribers are executed
-in a predefined order?? Or is that something different??
-
 Based on:
 
 http://stackoverflow.com/questions/1092531/event-system-in-python
@@ -125,3 +122,25 @@ def subscribe_to_events(events, subscribe_to, func, arg_match_func=None):
             subscribe(event_name)
     else:
         subscribe(subscribe_to)
+
+
+def init_events(defaults, arg_match_func=None):
+    """
+    Creates a dictionary of events for the provided defaults.
+
+    Parameters:
+    ----------
+    defaults: list of str
+        Default events to register
+    arg_match_func: optional, default None
+        Argument matching function to use when firing events
+
+    Returns:
+    -------
+    Dictionary of events.
+
+    """
+    events = {}
+    for d in defaults:
+        events[d] = Event(arg_match_func)
+    return events

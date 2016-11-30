@@ -98,11 +98,20 @@ def clear_cache():
 
 def add_injectable(name, wrapped, cache=False, clear_on=None, autocall=True):
     """
-    Adds an injectable.
-
+    ....
     """
-    inj = InjectableWrapper(name, wrapped, cache, clear_on, autocall)
-    _injectables[name] = inj
+
+    def create_injectable():
+        if not callable(wrapped):
+            return ValueWrapper(name, wrapped)
+        if not autocall:
+            return CallbackWrapper(name, wrapped)
+        if clear_on:
+            return CachedFuncWrapper(name, wrapped, clear_on)
+        else:
+            return FuncWrapper(name, wrapped)
+
+    _injectables[name] = create_injectable()
 
 
 def get_injectable(name):
@@ -122,7 +131,7 @@ def eval_injectable(name, **kwargs):
     """
     inj = get_injectable(name)
     if inj is not None:
-        return inj.collect()
+        return inj()
     return None
 
 
@@ -142,83 +151,135 @@ def list_injectables():
 
 
 ########################
-# INJECTABLE CLASSES
+# WRAPPER CLASSES
 ########################
 
 
-class InjectableWrapper(Collectable):
+class ValueWrapper(object):
     """
+    Wraps a value.
 
     """
 
-    def __init__(self, name, wrapped, cache=False, clear_on=None, autocall=True):
-        # set internals
+    def __init__(self, name, wrapped):
         self.name = name
-        self.cache = cache
-        if clear_on is not None:
-            self.cache = True
-        self.autocall = autocall
         self.update(wrapped)
 
-        # register cache clearing events
-        _register_clear_events(self.clear_cached, clear_on)
-
     def update(self, wrapped):
-        """
-        Updates the wrapped function or value. Notifies changes.
-
-        """
-        if inspect.isfunction(wrapped):
-            # a function is wrapped
-            self.func = wrapped
-            self.data = None
-
-        elif callable(wrapped):
-            # a class with __call__ is wrapped, need to create an instance first
-            init_kwargs = _do_collect(wrapped.__init__)
-            obj = wrapped(**init_kwargs)
-            self.func = obj.__call__
-            self.data = None
-
-        else:
-            # a value is wrapped
-            self.func = None
-            self.data = wrapped
-            self.cache = None
-
-        # notify the change in state
+        self.data = wrapped
         _notify_changed(self.name)
 
-    def collect(self, **kwargs):
-        """
-        Member of Collectable.
-        Called when variables are collected.
+    def __call__(self):
+        return self.data
 
-        """
-        if self.autocall:
-            return self.__call__(**kwargs)
-        else:
-            # should this be the function instead?
-            return self
+
+def _get_callable(wrapped):
+    """
+    Given a callable (function or class with __call__ method defined),
+    returns the call function.
+
+    Note: if the callable is a class, this assumes objects are created
+    via the __init__ method. TODO: add checks for when this is absent
+    and/or a __new__ method is provided instead.
+
+    Parameters
+    ----------
+    wrapped: function or callable class
+
+    Returns
+    -------
+    function
+
+    """
+
+    if inspect.isfunction(wrapped):
+        # a function is wrapped
+        return wrapped
+    elif callable(wrapped):
+        # a class is wrapped, need to create an instance first
+        init_kwargs = _do_collect(wrapped.__init__)
+        obj = wrapped(**init_kwargs)
+        return obj.__call__
+    else:
+        raise ValueError('The wrapped argument must be a function or callable class.')
+
+
+class CallbackWrapper(object):
+    """
+    Wraps a callback function...
+
+    Todo: add update, maybe memoize?
+
+    Does, this need to make notification?
+
+    I'm still not exactly sure what to do with this?
+
+    """
+
+    def __init__(self, name, wrapped):
+        self.name = name
+        self.func = _get_callable(wrapped)
+
+    def __call__(self, **local_kwargs):
+        return self.func
+
+
+def _collect_and_eval(name, func, **local_kwargs):
+    """
+    Collects inputs and evluates the function.
+
+    """
+    kwargs = _do_collect(func, **local_kwargs)
+    result = func(**kwargs)
+    _notify_changed(name)
+    return result
+
+
+class FuncWrapper(object):
+    """
+    Wraps a function.
+
+    For the moment, leave this not cacheable.
+
+    """
+
+    def __init__(self, name, wrapped):
+        self.name = name
+        self.update(wrapped)
+
+    def update(self, wrapped):
+        self.func = _get_callable(wrapped)
+        _notify_changed(self.name)
+
+    def __call__(self, **local_kwargs):
+        return _collect_and_eval(self.name, self.func, **local_kwargs)
+
+
+class CachedFuncWrapper(FuncWrapper):
+    """
+    Wraps a function that supports caching.
+
+    """
+
+    def __init__(self, name, wrapped, clear_on):
+
+        # init from FuncWrapper
+        super(CachedFuncWrapper, self).__init__(name, wrapped)
+
+        # set up caching
+        self.data = None
+        _register_clear_events(self.clear_cache, clear_on)
 
     def __call__(self, **local_kwargs):
         """
-        Returns the wrapped value or function results.
+        TODO: figure out what to do if we have local_kwargs,
+        does this not get applied for cahcing??
 
         """
-        if self.func is not None and ((not self.cache) or self.data is None):
-            # evaluate the function
-            kwargs = _do_collect(self.func, **local_kwargs)
-            self.data = self.func(**kwargs)
-            _notify_changed(self.name)
+        if self.data is None:
+            self.data = _collect_and_eval(self.name, self.func, **local_kwargs)
 
-        # return the results
         return self.data
 
-    def clear_cached(self):
-        """
-        Clears out the cached data. Notifies subscribers.
-
-        """
-        if self.func is not None:
-            self.data = None
+    def clear_cache(self):
+        self.data = None

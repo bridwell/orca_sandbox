@@ -7,6 +7,9 @@ framework rather than called directly.
 This is an extension of (and heavily influenced by) the variable collection
 mechansims in https://github.com/UDST/orca.
 
+
+See the tests for examples.
+
 """
 import inspect
 
@@ -93,8 +96,17 @@ def collect_inputs(func, injectables={}, **local_kwargs):
         # global inputs injectables
         elif a in injectables:
             inj = injectables[a]
+
+            # this needs to get removed,
+            # leave-in so we don't break tests
+            # todo: update the tests
             if isinstance(inj, Collectable):
                 inj = inj.collect()
+
+            # temporary -- use for re-factored wrappers
+            elif callable(inj):
+                inj = inj()
+
             kwargs[a] = inj
 
         # function defaults
