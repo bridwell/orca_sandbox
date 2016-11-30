@@ -7,12 +7,27 @@ This is very experimental.
 """
 
 
-from orca_sandbox.events import *
-from orca_sandbox.collector import *
+from .events import *
+from .collector import *
 
 
-_injectables = {}
-_events = init_events(['clear_all', 'run', 'iteration', 'step'])
+########################
+# PRIVATE MODULE-LEVEL
+########################
+
+def _init_globals():
+    """
+    Initializes module-level variables.
+
+    """
+    global _injectables, _events
+    _injectables = {}
+    _events = init_events(['clear_all', 'run', 'iteration', 'step'])
+
+
+# initialize the globals upon importing
+# is there a better way to do this?
+_init_globals()
 
 
 def _notify_changed(name):
@@ -52,13 +67,83 @@ def _register_clear_events(func, clear_on):
     subscribe_to_events(_events, clear_on, func, collect_inputs)
 
 
-def _do_collect(func):
+def _do_collect(func, **kwargs):
     """
     Collects inputs required by the function,
     given the current collection of injectables.
 
     """
-    return collect_inputs(func, _injectables)
+    return collect_inputs(func, _injectables, **kwargs)
+
+
+########################
+# PUBLIC MODULE-LEVEL
+########################
+
+def clear_all():
+    """
+    Re-initializes everything.
+
+    """
+    _init_globals
+
+
+def clear_cache():
+    """
+    Clears the cache.
+
+    """
+    _notify_changed('clear_all')
+
+
+def add_injectable(name, wrapped, cache=False, clear_on=None, autocall=True):
+    """
+    Adds an injectable.
+
+    """
+    inj = InjectableWrapper(name, wrapped, cache, clear_on, autocall)
+    _injectables[name] = inj
+
+
+def get_injectable(name):
+    """
+    Returns an injectable.
+
+    """
+    if name in _injectables:
+        return _injectables[name]
+    return None
+
+
+def eval_injectable(name, **kwargs):
+    """
+    Evaluates an injectable and returns the result.
+
+    """
+    inj = get_injectable(name)
+    if inj is not None:
+        return inj.collect()
+    return None
+
+
+def update_injectable(name, wrapped):
+    """
+    Updates an injectable.
+
+    """
+
+    inj = get_injectable(name)
+    if inj is not None:
+        inj.update(wrapped)
+
+
+def list_injectables():
+    return _injectables.keys()
+
+
+########################
+# INJECTABLE CLASSES
+########################
 
 
 class InjectableWrapper(Collectable):
@@ -90,8 +175,9 @@ class InjectableWrapper(Collectable):
 
         elif callable(wrapped):
             # a class with __call__ is wrapped, need to create an instance first
-            kwargs = _do_collect(wrapped.__init__)
-            self.func = wrapped(kwargs)
+            init_kwargs = _do_collect(wrapped.__init__)
+            obj = wrapped(**init_kwargs)
+            self.func = obj.__call__
             self.data = None
 
         else:
@@ -103,7 +189,7 @@ class InjectableWrapper(Collectable):
         # notify the change in state
         _notify_changed(self.name)
 
-    def collect(self, *kwargs):
+    def collect(self, **kwargs):
         """
         Member of Collectable.
         Called when variables are collected.
@@ -112,6 +198,7 @@ class InjectableWrapper(Collectable):
         if self.autocall:
             return self.__call__(**kwargs)
         else:
+            # should this be the function instead?
             return self
 
     def __call__(self, **local_kwargs):
@@ -135,74 +222,3 @@ class InjectableWrapper(Collectable):
         """
         if self.func is not None:
             self.data = None
-
-
-def add_injectable(name, wrapped, cache=False, clear_on=None):
-    """
-    Adds an injectable.
-
-    """
-    inj = InjectableWrapper(name, wrapped, cache, clear_on)
-    _injectables[name] = inj
-    return inj
-
-
-def get_injectable(name):
-    """
-    Returns an injectable.
-
-    """
-    if name in _injectables:
-        return _injectables[name]
-    return None
-
-
-def eval_injectable(name):
-    """
-    Collects and injectable.
-
-    """
-    inj = get_injectable(name)
-    if inj is not None:
-        return inj.collect()
-    return None
-
-
-def list_injectables():
-    return _injectables.keys()
-
-
-class ColumnWrapper(InjectableWrapper):
-    """
-    Wraps either a pandas.Series or function that returns one.
-
-    Also support a numpy array with this?
-
-    """
-
-    def __init__(self, name, wrapped, cached=False, clear_on=None):
-        # init from the super
-        super(ColumnWrapper, self).__init__(
-            name, wrapped, cached, clear_on)
-
-        # shortcut our evaluation calls to the super do I need this?
-        self.local = super(ColumnWrapper, self).__call__
-
-
-class DataFrameWrapper(InjectableWrapper):
-    """
-    Wraps a pandas.DataFrame or a function that returns one.
-
-    """
-
-    class DataFrameWrapper(InjectableWrapper):
-
-        def __init__(self, name, wrapper,
-                     cached=False, clear_on=None, column_names=None):
-
-            # init from the super
-            super(DataFrameWrapper, self).__init__(
-                name, wrapped, cached, clear_on, autocall=False)
-
-            # shortcut our evaluation calls to the super do I need this?
-            self.local = super(DataFrameWrapper, self).__call__
