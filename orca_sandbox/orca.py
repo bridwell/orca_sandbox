@@ -98,7 +98,8 @@ def clear_cache():
 
 def add_injectable(name, wrapped, cache=False, clear_on=None, autocall=True):
     """
-    ....
+    Adds a wrapped value or function as an injectable.
+
     """
 
     def create_injectable():
@@ -112,6 +113,7 @@ def add_injectable(name, wrapped, cache=False, clear_on=None, autocall=True):
             return FuncWrapper(name, wrapped)
 
     _injectables[name] = create_injectable()
+    _notify_changed(name)
 
 
 def get_injectable(name):
@@ -135,15 +137,16 @@ def eval_injectable(name, **kwargs):
     return None
 
 
-def update_injectable(name, wrapped):
-    """
-    Updates an injectable.
+# DON'T USE THIS FOR NOW, USE ADD INJECTABLE INSTEAD
+# def update_injectable(name, wrapped):
+#    """
+#    Updates an injectable.
 
-    """
+#    """
 
-    inj = get_injectable(name)
-    if inj is not None:
-        inj.update(wrapped)
+#    inj = get_injectable(name)
+#    if inj is not None:
+#        inj.update(wrapped)
 
 
 def list_injectables():
@@ -163,14 +166,10 @@ class ValueWrapper(object):
 
     def __init__(self, name, wrapped):
         self.name = name
-        self.update(wrapped)
-
-    def update(self, wrapped):
-        self.data = wrapped
-        _notify_changed(self.name)
+        self._data = wrapped
 
     def __call__(self):
-        return self.data
+        return self._data
 
 
 def _get_callable(wrapped):
@@ -220,11 +219,7 @@ class CallbackWrapper(object):
 
     def __init__(self, name, wrapped):
         self.name = name
-        self.update(wrapped)
-
-    def update(self, wrapped):
         self.func = _get_callable(wrapped)
-        _notify_changed(self.name)
 
     def __call__(self, **local_kwargs):
         f = self.func
@@ -253,11 +248,7 @@ class FuncWrapper(object):
 
     def __init__(self, name, wrapped):
         self.name = name
-        self.update(wrapped)
-
-    def update(self, wrapped):
         self.func = _get_callable(wrapped)
-        _notify_changed(self.name)
 
     def __call__(self, **local_kwargs):
         return _collect_and_eval(self.name, self.func, **local_kwargs)
@@ -275,7 +266,7 @@ class CachedFuncWrapper(FuncWrapper):
         super(CachedFuncWrapper, self).__init__(name, wrapped)
 
         # set up caching
-        self.data = None
+        self._data = None
         _register_clear_events(self.clear_cache, clear_on)
 
     def __call__(self, **local_kwargs):
@@ -287,10 +278,10 @@ class CachedFuncWrapper(FuncWrapper):
         (on or off) setting.
 
         """
-        if self.data is None:
-            self.data = _collect_and_eval(self.name, self.func, **local_kwargs)
+        if self._data is None:
+            self._data = _collect_and_eval(self.name, self.func, **local_kwargs)
 
-        return self.data
+        return self._data
 
     def clear_cache(self):
-        self.data = None
+        self._data = None
