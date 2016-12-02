@@ -1,4 +1,6 @@
 import pytest
+import numpy as np
+import pandas as pd
 
 from .. import orca
 
@@ -80,7 +82,6 @@ def test_injectables(a_value, my_func, my_func2, my_class):
     assert orca.eval_injectable('class_test') == 300
 
     # update the value injectable and check again
-    #orca.update_injectable('value_test1', 5)
     orca.add_injectable('value_test1', 5)
     assert orca.eval_injectable('value_test1') == 5
     assert orca.eval_injectable('func_test1') == 10
@@ -103,3 +104,40 @@ def test_callbacks(my_func2):
     orca.add_injectable('cb_test', my_func2, autocall=False)
     cb = orca.eval_injectable('cb_test')
     assert cb(10) == 20
+
+
+def test_columns():
+    """
+    Test creating columns.
+
+    """
+    orca.clear_all()
+
+    def get_s(cnt):
+        return pd.Series(np.arange(cnt))
+
+    # wrap a series
+    s_4 = get_s(4)
+    orca.add_column('series1', s_4, attach_to='something')
+
+    # wrap a function that returns a series
+    orca.add_injectable('cnt', 2)
+    orca.add_column('series2', get_s, clear_on='cnt',
+                    attach_to=['something', 'something_else'])
+
+    # check evaluations
+    res1 = orca.eval_injectable('series1')
+    assert (res1 == get_s(4)).all()
+
+    res2 = orca.eval_injectable('series2')
+    assert (res2 == get_s(2)).all()
+
+    orca.add_injectable('cnt', 5)
+    res3 = orca.eval_injectable('series2')
+    assert (res3 == get_s(5)).all()
+
+    # check registered attachements
+    a = orca._attachments
+    assert len(a) == 2
+    assert len(a['something']) == 2
+    assert len(a['something_else']) == 1

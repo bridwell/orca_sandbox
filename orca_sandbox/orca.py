@@ -266,6 +266,7 @@ class ColumnWrapper(object):
         # TODO: if cached, make sure attachments are in clear events?
 
         # create the injectable
+        self.name = name
         self._injectable = _create_injectable(name, wrapped, clear_on)
 
         # add attachments
@@ -274,6 +275,7 @@ class ColumnWrapper(object):
     def __call__(self):
         result = self._injectable()
         assert isinstance(result, pd.Series)
+        result.name = self.name
         return result
 
 
@@ -287,12 +289,12 @@ class TableWrapper(object):
                  clear_on=None, attach_to=None, columns=None):
 
         # create the injectable
+        self.name = name
         self._injectable = _create_injectable(name, wrapped, clear_on)
         self._local_columns = columns
 
         # add attachments
-        # do this later, right now just attach columns
-        # _attach(name, attach_to)
+        _attach(name, attach_to)
 
     def __call__(self):
         """
@@ -341,20 +343,32 @@ class TableWrapper(object):
         return list(self._local_columns)
 
     @property
-    def attached_tables(self):
-        """
-        Returns names of attached tables.
-
-        """
-        return []
-
-    @property
     def attached_columns(self):
         """
-        Return names of attached columns.
+        Return the NAMES of the attached columns.
+
+        Need to work out a general loop function for iteraitng through these?
 
         """
-        return []
+        cols = []
+
+        if self.name in _attachments:
+            attached = _attachments[self.name]
+
+            for a in attached:
+                if a not in _injectables:
+                    continue
+
+                inj = _injectables[a]
+
+                if isinstance(inj, ColumnWrapper):
+                    cols.append(inj.name)
+                elif isinstance(inj, TableWrapper):
+                    # do we want to attach all columns or just local?
+                    # for now, let's stick with just local
+                    cols += inj.local_columns
+
+        return cols
 
     @property
     def columns(self):
@@ -368,22 +382,97 @@ class TableWrapper(object):
         """
         Fetches a column from the wrapper.
 
-        Right now, this just returns the local
+        Can we employ some set logic to improve this?
 
         """
-        return self.local[column_name]
+        # 1st look locally
+        if column_name in self.local_columns:
+            return self.local[column_name]
+
+        # now look to attachments
+        if self.name in _attachments:
+            attached = _attachments[self.name]
+
+            for a in attached:
+
+                # fetch the injectable
+                if a not in _injectables:
+                    continue
+                inj = _injectables[a]
+
+                # columns
+                if isinstance(inj, ColumnWrapper):
+                    if column_name == inj.name:
+                        return inj()
+
+                # tables
+                if isinstance(inj, TableWrapper):
+                    if column_name in inj.local_columns:
+                        return inj[column_name]
+
+        raise ValueError("column '{}' not found in table '{}'".format(column_name, self.name))
 
     def __getitem__(self, key):
         return self.get_column(key)
 
-    # def __getattr__(self, key):
-    #    return self.get_column(key)
+    def __getattr__(self, key):
+        return self.get_column(key)
+
+    def to_frame_all(self):
+        """
+        Return a view of the table wrapper with ALL local and attached columns.
+
+        """
+        df = self.local
+        df_concat = [df]
+        series_concat = []
+
+        # get attached
+        if self.name in _attachments:
+
+            attached = _attachments[self.name]
+            df_concat = [df]
+            series_concat = []
+
+            # fetch the attachments
+            for a in attached:
+
+                # fetch the injectable
+                if a not in _injectables:
+                    continue
+                inj = _injectables[a]
+
+                # columns
+                if isinstance(inj, ColumnWrapper):
+                    series_concat.append(inj())
+
+                # tables
+                elif isinstance(inj, TableWrapper):
+                    # do we want to attach all columns or just local?
+                    # for now, let's stick with just local
+                    df_concat.append(inj.local)
+
+        # concat independent columns into a data frame
+        if len(series_concat) > 0:
+            df_concat.append(pd.concat(series_concat, axis=1))
+
+        # concat attached columns
+        if len(df_concat) > 1:
+            df = pd.concat(df_concat, axis=1)
+        else:
+            # no attachments, just copy the local
+            df = df.copy()
+
+        return df
 
     def to_frame(self, columns=None):
         """
         Returns a view of the table as a dataframe.
 
+        Note: all the data in the result represents a copy.
+
         """
+
         return
 
     def update_col(self, column_name, series):
@@ -395,23 +484,12 @@ class TableWrapper(object):
         """
         self.local[column_name] = series
 
+        # notify changes, assume event named <table_name>.<column_name>
+        # this needs to be tested!!
+        _notify_changed('{}.{}'.format(self.name, column_name))
+
     def __setitem__(self, key, value):
-        """
-        Updates or adds a column with syntax:
-
-        wrapper['col'] = series
-
-        """
-        return self.update_col(key, value)
-
-    # def __setattr__(self, key, value):
-    #    """
-    #    Updates or adds a columns with syntax:
-    #
-    #    wrapper.col1 = series
-    #
-    #    """
-    #   return self.update_col(key, value)
+        self.update_col(key, value)
 
     def update_col_from_series(self, column_name, series, cast=False):
         """
@@ -468,6 +546,21 @@ def add_injectable(name, wrapped, clear_on=None, autocall=True):
     _notify_changed(name)
 
 
+def add_column(name, wrapped, attach_to=None, clear_on=None):
+    # TODO: do we need to un-register attachments?
+
+    _injectables[name] = ColumnWrapper(name, wrapped, clear_on, attach_to)
+    _notify_changed(name)
+
+
+def add_table(name, wrapped, attach_to=None, clear_on=None, columns=None):
+    # TODO: do we need to un-register attachments?
+
+    _injectables[name] = TableWrapper(
+        name, wrapped, clear_on, attach_to, columns)
+    _notify_changed(name)
+
+
 def get_injectable(name):
     """
     Returns an injectable.
@@ -490,19 +583,17 @@ def eval_injectable(name, **kwargs):
 
 
 def list_injectables():
+    """
+    Return the names of the injected items.
+
+    """
     return _injectables.keys()
 
 
-def add_column(name, wrapped, attach_to=None, clear_on=None):
-    # TODO: do we need to un-register attachments?
+def list_attachments():
+    """
+    Return registered attachements. Keys are the table names the items
+    are attached to, values are the names of the attached items'.
 
-    _injectables[name] = ColumnWrapper(name, wrapped, clear_on, attach_to)
-    _notify_changed(name)
-
-
-def add_table(name, wrapped, attach_to=None, clear_on=None, columns=None):
-    # TODO: do we need to un-register attachments?
-
-    _injectables[name] = TableWrapper(
-        name, wrapped, clear_on, attach_to, columns)
-    _notify_changed(name)
+    """
+    return _attachments
