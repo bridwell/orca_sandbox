@@ -343,11 +343,43 @@ class TableWrapper(object):
         return list(self._local_columns)
 
     @property
+    def attached(self):
+        """
+        Fetches items attached to the table.
+
+        Returns:
+        --------
+        cols: Attached column wrappers
+        tables: Attached table wrappers
+
+        """
+        cols = []
+        tables = []
+
+        if self.name in _attachments:
+            attached = _attachments[self.name]
+
+            for a in attached:
+
+                # fetch the injectable
+                if a not in _injectables:
+                    continue
+                inj = _injectables[a]
+
+                # columns
+                if isinstance(inj, ColumnWrapper):
+                    cols.append(inj)
+
+                # tables
+                if isinstance(inj, TableWrapper):
+                    tables.append(inj)
+
+        return cols, tables
+
+    @property
     def attached_columns(self):
         """
         Return the NAMES of the attached columns.
-
-        Need to work out a general loop function for iteraitng through these?
 
         """
         cols = []
@@ -365,8 +397,8 @@ class TableWrapper(object):
                     cols.append(inj.name)
                 elif isinstance(inj, TableWrapper):
                     # do we want to attach all columns or just local?
-                    # for now, let's stick with just local
-                    cols += inj.local_columns
+                    # for now, get everything
+                    cols += inj.columns
 
         return cols
 
@@ -381,8 +413,6 @@ class TableWrapper(object):
     def get_column(self, column_name):
         """
         Fetches a column from the wrapper.
-
-        Can we employ some set logic to improve this?
 
         """
         # 1st look locally
@@ -407,18 +437,26 @@ class TableWrapper(object):
 
                 # tables
                 if isinstance(inj, TableWrapper):
-                    if column_name in inj.local_columns:
+                    if column_name in inj.columns:
                         return inj[column_name]
 
         raise ValueError("column '{}' not found in table '{}'".format(column_name, self.name))
 
     def __getitem__(self, key):
+        """"
+        Returns a column via <wrapper>['<column_name>'] syntax.
+
+        """
         return self.get_column(key)
 
     def __getattr__(self, key):
+        """
+        Returns a column via <wrapper>.<column_name> syntax.
+
+        """
         return self.get_column(key)
 
-    def to_frame_all(self):
+    def to_frame_all(self, copy_local=True):
         """
         Return a view of the table wrapper with ALL local and attached columns.
 
@@ -431,10 +469,7 @@ class TableWrapper(object):
         if self.name in _attachments:
 
             attached = _attachments[self.name]
-            df_concat = [df]
-            series_concat = []
 
-            # fetch the attachments
             for a in attached:
 
                 # fetch the injectable
@@ -450,30 +485,89 @@ class TableWrapper(object):
                 elif isinstance(inj, TableWrapper):
                     # do we want to attach all columns or just local?
                     # for now, let's stick with just local
-                    df_concat.append(inj.local)
+                    df_concat.append(inj.to_frame_all(False))
 
         # concat independent columns into a data frame
         if len(series_concat) > 0:
             df_concat.append(pd.concat(series_concat, axis=1))
 
-        # concat attached columns
+        # concat attached tables
         if len(df_concat) > 1:
             df = pd.concat(df_concat, axis=1)
         else:
             # no attachments, just copy the local
-            df = df.copy()
+            if copy_local:
+                df = df.copy()
 
         return df
 
-    def to_frame(self, columns=None):
+    def to_frame(self, columns=None, copy_local=True):
         """
-        Returns a view of the table as a dataframe.
-
-        Note: all the data in the result represents a copy.
+        Returns a view of the table as a dataframe. All values
+        in the data frame are copies.
 
         """
+        # if columns are not provided, return everything
+        if not columns:
+            return self.to_frame_all()
 
-        return
+        # treat the desired columns as a set
+        if not isinstance(columns, list):
+            columns = [columns]
+        col_set = set(columns)
+
+        df_concat = []
+        series_concat = []
+
+        # first check local
+        df = self.local
+        from_local = set(df.columns) & col_set
+        if len(from_local) > 0:
+            df_concat = [df[list(from_local)]]
+        col_set -= from_local
+
+        # now scan attachments
+        if self.name in _attachments:
+            attached = _attachments[self.name]
+
+            for a in attached:
+
+                # break if everything has been found
+                if len(col_set) == 0:
+                    break
+
+                # fetch the injectable
+                if a not in _injectables:
+                    continue
+                inj = _injectables[a]
+
+                # columns
+                if isinstance(inj, ColumnWrapper):
+                    if inj.name in col_set:
+                        series_concat.append(inj())
+                        col_set.remove(inj.name)
+
+                # tables
+                elif isinstance(inj, TableWrapper):
+                    curr_cols = col_set & set(inj.columns)
+                    if len(curr_cols) > 0:
+                        df_concat.append(inj.to_frame(list(curr_cols), False))
+                        col_set -= curr_cols
+
+        if len(col_set) > 0:
+            raise ValueError('Columns: {}, not found'.format(col_set))
+
+        # concat independent columns into a data frame
+        if len(series_concat) > 0:
+            df_concat.append(pd.concat(series_concat, axis=1))
+
+        # concat attached tables
+        if len(df_concat) == 0:
+            raise ValueError("Problem in to_frame")
+        df = pd.concat(df_concat, axis=1)
+
+        # return the final data frame with columns in the desired order
+        return df[columns]
 
     def update_col(self, column_name, series):
         """
