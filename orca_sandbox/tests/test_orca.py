@@ -232,3 +232,39 @@ def test_table_wrappper():
     # test missing columns
     with pytest.raises(ValueError):
         tab.to_frame(['zeros', 'ones', 'twos'])
+
+
+def test_update_table_columns():
+    """
+    Make sure changes to table values
+    are propogated.
+
+    """
+    orca.clear_all()
+
+    # wrap a table we will be updating
+    df = pd.DataFrame({
+        'a': np.zeros(4),
+        'b': np.ones(4)
+    })
+    orca.add_table('df1', df)
+
+    # wrap a ached function that depends on column 'b'
+    def my_func(df1):
+        return df1['b'] * 2.0
+    orca.add_injectable('test_func', my_func, clear_on='df1.b')
+
+    # initial evaluation
+    assert (orca.eval_injectable('test_func') == 2).all()
+
+    # update the entire column and re-evaluate
+    tab = orca.eval_injectable('df1')
+    tab['b'] = 5
+    assert (orca.eval_injectable('test_func') == 10).all()
+
+    # partial column update using 'update_col_from_series'
+    tab = orca.eval_injectable('df1')
+    to_update = pd.Series([20, 20], index=pd.Index([1, 3]))
+    tab.update_col_from_series('b', to_update)
+    expected = [10, 40, 10, 40]
+    assert (orca.eval_injectable('test_func') == expected).all()

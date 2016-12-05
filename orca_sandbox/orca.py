@@ -208,9 +208,9 @@ class CallbackWrapper(object):
 
 class FuncWrapper(object):
     """
-    Wraps a function.
-
-    For the moment, leave this not cacheable.
+    Wraps a function. The function is NOT cacheable and will
+    therefore be re-evaluated on each call, as will any wrappers
+    that depend upon it.
 
     """
 
@@ -253,6 +253,7 @@ class CachedFuncWrapper(FuncWrapper):
 
     def clear_cache(self):
         self._data = None
+        # _notify_changed(self.name)  # is this necessary?
 
 
 class ColumnWrapper(object):
@@ -612,6 +613,7 @@ class TableWrapper(object):
                 raise ValueError(err_msg)
 
         self.local.loc[series.index, column_name] = series
+        _notify_changed('{}.{}'.format(self.name, column_name))
 
 
 ########################
