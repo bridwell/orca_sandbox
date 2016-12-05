@@ -25,7 +25,7 @@ def _init_globals():
     global _injectables, _events, _attachments
     _injectables = {}
     _attachments = {}
-    _events = init_events(['clear_all', 'run', 'iteration', 'step'])
+    _events = init_events(['env', 'run', 'iteration', 'step', 'collect'])
 
 
 # initialize the globals upon importing
@@ -49,7 +49,7 @@ def _notify_changed(name):
 
 def _register_clear_events(func, clear_on):
     """
-    Registers cache clearing events. A 'clear_all'
+    Registers cache clearing events. A 'env'
     event will always be registered as well.
 
     Parameters:
@@ -62,11 +62,11 @@ def _register_clear_events(func, clear_on):
 
     """
     if clear_on is None:
-        clear_on = ['clear_all']
+        clear_on = ['env']
     if isinstance(clear_on, str):
         clear_on = [clear_on]
-    if 'clear_all' not in clear_on:
-        clear_on = ['clear_all'] + clear_on
+    if 'env' not in clear_on:
+        clear_on = ['env'] + clear_on
 
     subscribe_to_events(_events, clear_on, func, collect_inputs)
 
@@ -111,17 +111,6 @@ def _get_callable(wrapped):
         raise ValueError('The wrapped argument must be a function or callable class.')
 
 
-def _collect_and_eval(name, func, **local_kwargs):
-    """
-    Collects inputs and evluates the function.
-
-    """
-    kwargs = _do_collect(func, **local_kwargs)
-    result = func(**kwargs)
-    _notify_changed(name)
-    return result
-
-
 def _create_injectable(name, wrapped, clear_on=None, autocall=True):
     """
     Creates an injectable from a provided value or function.
@@ -133,9 +122,9 @@ def _create_injectable(name, wrapped, clear_on=None, autocall=True):
     if not autocall:
         return CallbackWrapper(name, wrapped)
     if clear_on:
-        return CachedFuncWrapper(name, wrapped, clear_on)
+        return FuncWrapper(name, wrapped, clear_on)
     else:
-        return FuncWrapper(name, wrapped)
+        return FuncWrapper(name, wrapped, 'collect')
 
 
 def _attach(name, attach_to):
@@ -208,52 +197,40 @@ class CallbackWrapper(object):
 
 class FuncWrapper(object):
     """
-    Wraps a function. The function is NOT cacheable and will
-    therefore be re-evaluated on each call, as will any wrappers
-    that depend upon it.
-
-    """
-
-    def __init__(self, name, wrapped):
-        self.name = name
-        self.func = _get_callable(wrapped)
-
-    def __call__(self, **local_kwargs):
-        return _collect_and_eval(self.name, self.func, **local_kwargs)
-
-
-class CachedFuncWrapper(FuncWrapper):
-    """
     Wraps a function that supports caching.
 
     """
 
     def __init__(self, name, wrapped, clear_on):
-
-        # init from FuncWrapper
-        super(CachedFuncWrapper, self).__init__(name, wrapped)
+        self.name = name
+        self.func = _get_callable(wrapped)
 
         # set up caching
         self._data = None
         _register_clear_events(self.clear_cache, clear_on)
 
     def __call__(self, **local_kwargs):
-        """
-        TODO: figure out what to do if we have local_kwargs,
-        does this not get applied for cahcing??
 
-        ALSO, think about how this interacts with a global cache
-        (on or off) setting.
+        # clear out non-cached functions
+        _notify_changed('collect')
 
-        """
+        # if kwargs are provided, do a temporary evaluation
+        # any cached data will be reverted to on the next call
+        if len(local_kwargs) > 0:
+            kwargs = _do_collect(self.func, **local_kwargs)
+            return self.func(**kwargs)
+
+        # evaluate the function if not cached
         if self._data is None:
-            self._data = _collect_and_eval(self.name, self.func, **local_kwargs)
+            kwargs = _do_collect(self.func)
+            self._data = self.func(**kwargs)
 
         return self._data
 
     def clear_cache(self):
-        self._data = None
-        _notify_changed(self.name)
+        if self._data is not None:
+            self._data = None
+            _notify_changed(self.name)
 
 
 class ColumnWrapper(object):
@@ -342,40 +319,6 @@ class TableWrapper(object):
             # to be evaluated
             self._local_columns = self.local.columns
         return list(self._local_columns)
-
-    @property
-    def attached(self):
-        """
-        Fetches items attached to the table.
-
-        Returns:
-        --------
-        cols: Attached column wrappers
-        tables: Attached table wrappers
-
-        """
-        cols = []
-        tables = []
-
-        if self.name in _attachments:
-            attached = _attachments[self.name]
-
-            for a in attached:
-
-                # fetch the injectable
-                if a not in _injectables:
-                    continue
-                inj = _injectables[a]
-
-                # columns
-                if isinstance(inj, ColumnWrapper):
-                    cols.append(inj)
-
-                # tables
-                if isinstance(inj, TableWrapper):
-                    tables.append(inj)
-
-        return cols, tables
 
     @property
     def attached_columns(self):
@@ -625,7 +568,7 @@ def clear_all():
     Re-initializes everything.
 
     """
-    _init_globals
+    _init_globals()
 
 
 def clear_cache():
@@ -633,7 +576,7 @@ def clear_cache():
     Clears the cache.
 
     """
-    _notify_changed('clear_all')
+    _notify_changed('env')
 
 
 def add_injectable(name, wrapped, clear_on=None, autocall=True):

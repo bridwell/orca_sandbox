@@ -94,6 +94,48 @@ def test_injectables(a_value, my_func, my_func2, my_class):
     """
     assert orca.eval_injectable('class_test') == 110
 
+    # check clearing the environment
+    orca.clear_all()
+    print orca.list_injectables()
+    assert len(orca.list_injectables()) == 0
+    assert len(orca._attachments) == 0
+    for k, v in orca._events.items():
+        assert len(v.subscribers) == 0
+
+
+def test_upstream_injectables():
+    """
+    Testing the propagation of changes for upstream cases.
+
+    """
+    orca.clear_all()
+
+    def func_b(a):
+        return a + 1
+
+    def func_c(b):
+        return b * -1
+
+    orca.add_injectable('b', func_b, 'a')
+    orca.add_injectable('c', func_c, 'b')
+
+    # test 1 - upstream is a value
+    orca.add_injectable('a', 10)
+    assert orca.eval_injectable('c') == -11
+    orca.add_injectable('a', 20)
+    assert orca.eval_injectable('c') == -21
+
+    # test 2 - upstream is a function
+    temp = [0]
+
+    def func_a():
+        temp[0] += 1
+        return temp[0]
+
+    orca.add_injectable('a', func_a)
+    assert orca.eval_injectable('c') == -2
+    assert orca.eval_injectable('c') == -3
+
 
 def test_callbacks(my_func2):
     """
