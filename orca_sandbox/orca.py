@@ -523,7 +523,10 @@ class TableWrapper(object):
         df = self.local
         from_local = set(df.columns) & col_set
         if len(from_local) > 0:
-            df_concat = [df[list(from_local)]]
+            df = df[list(from_local)]
+            if copy_local:
+                df = df.copy()
+            df_concat = [df]
         col_set -= from_local
 
         # now scan attachments
@@ -564,10 +567,10 @@ class TableWrapper(object):
         # concat attached tables
         if len(df_concat) == 0:
             raise ValueError("Problem in to_frame")
-        df = pd.concat(df_concat, axis=1)
+        final_df = pd.concat(df_concat, axis=1)
 
         # return the final data frame with columns in the desired order
-        return df[columns]
+        return final_df[columns]
 
     def update_col(self, column_name, series):
         """
