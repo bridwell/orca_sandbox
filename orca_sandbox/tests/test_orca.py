@@ -84,8 +84,8 @@ def test_injectables(a_value, my_func, my_func2, my_class):
     # update the value injectable and check again
     orca.add_injectable('value_test1', 5)
     assert orca.eval_injectable('value_test1') == 5
-    assert orca.eval_injectable('func_test1') == 10
     assert orca.eval_injectable('func_test2') == 20
+    assert orca.eval_injectable('func_test1') == 10
 
     """
     Note that this retains the original value_test1 value (100).

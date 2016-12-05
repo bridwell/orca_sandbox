@@ -253,7 +253,7 @@ class CachedFuncWrapper(FuncWrapper):
 
     def clear_cache(self):
         self._data = None
-        # _notify_changed(self.name)  # is this necessary?
+        _notify_changed(self.name)
 
 
 class ColumnWrapper(object):
