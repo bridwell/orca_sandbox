@@ -597,6 +597,8 @@ def add_column(name, wrapped, attach_to=None, clear_on=None):
 
 def add_table(name, wrapped, attach_to=None, clear_on=None, columns=None):
     # TODO: do we need to un-register attachments?
+    # TODO: notify changed all events starting with the table name
+    # i.e. buildings.col1, buildings.col2
 
     _injectables[name] = TableWrapper(
         name, wrapped, clear_on, attach_to, columns)
@@ -639,3 +641,64 @@ def list_attachments():
 
     """
     return _attachments
+
+
+########################
+# DECORATORS
+# NEED TO THINK ABOUT HOW
+# TO MAKE IT EASIER TO DEFINE
+# CACHE CLEARING DEPENDENCIES??
+########################
+
+def get_name(name, func):
+    if name:
+        return name
+    else:
+        return func.__name__
+
+
+def injectable(name=None, clear_on=None):
+    """
+    Decorates functions that will register
+    a generic injectable.
+
+    """
+    def decorator(func):
+        add_injectable(get_name(name, func), func, clear_on)
+        return func
+    return decorator
+
+
+def callback(name=None):
+    """
+    Decorates functions that will return a callback function.
+
+    """
+    def decorator(func):
+        add_injectable(get_name(name, func), func, autocall=False)
+        return func
+    return decorator
+
+
+def column(name=None, attach_to=None, clear_on=None):
+    """
+    Decorates functions that will register
+    a column
+
+    """
+    def decorator(func):
+        add_column(get_name(name, func), func, attach_to, clear_on)
+        return func
+    return decorator
+
+
+def table(name=None, attach_to=None, clear_on=None, columns=None):
+    """
+    Decorates functions that will register
+    a column
+
+    """
+    def decorator(func):
+        add_table(get_name(name, func), func, attach_to, clear_on, columns)
+        return func
+    return decorator

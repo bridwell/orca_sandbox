@@ -110,14 +110,13 @@ def test_upstream_injectables():
     """
     orca.clear_all()
 
-    def func_b(a):
+    @orca.injectable(clear_on='a')
+    def b(a):
         return a + 1
 
+    @orca.injectable('c', clear_on='b')
     def func_c(b):
         return b * -1
-
-    orca.add_injectable('b', func_b, 'a')
-    orca.add_injectable('c', func_c, 'b')
 
     # test 1 - upstream is a value
     orca.add_injectable('a', 10)
@@ -128,11 +127,11 @@ def test_upstream_injectables():
     # test 2 - upstream is a function
     temp = [0]
 
-    def func_a():
+    @orca.injectable()
+    def a():
         temp[0] += 1
         return temp[0]
 
-    orca.add_injectable('a', func_a)
     assert orca.eval_injectable('c') == -2
     assert orca.eval_injectable('c') == -3
 
@@ -143,7 +142,11 @@ def test_callbacks(my_func2):
 
     """
     orca.clear_all()
-    orca.add_injectable('cb_test', my_func2, autocall=False)
+
+    @orca.callback()
+    def cb_test(arg1):
+        return arg1 + arg1
+
     cb = orca.eval_injectable('cb_test')
     assert cb(10) == 20
 
@@ -193,16 +196,17 @@ def test_table_wrappper():
     orca.add_column('ones', pd.Series(np.ones(row_count)), attach_to='a_df')
 
     # wrap a function that returns a series and attach it
+    @orca.column(attach_to='a_df')
     def twos():
         return pd.Series(np.ones(row_count)) * 2
-    orca.add_column('twos', twos, attach_to='a_df')
 
     # wrap a function that returns a data frame
-    df = pd.DataFrame({
-        'threes': np.ones(row_count) * 3,
-        'fours': np.ones(row_count) * 4,
-    })
-    orca.add_table('blah_df', df, attach_to='a_df')
+    @orca.table('blah_df', attach_to='a_df')
+    def get_blah():
+        return pd.DataFrame({
+            'threes': np.ones(row_count) * 3,
+            'fours': np.ones(row_count) * 4,
+        })
 
     # evaluate the stuff we've wrapped
     assert (orca.eval_injectable('ones') == 1).all()
@@ -291,10 +295,10 @@ def test_update_table_columns():
     })
     orca.add_table('df1', df)
 
-    # wrap a ached function that depends on column 'b'
+    # wrap a column function that depends on column 'b'
+    @orca.column('test_func', clear_on='df1.b')
     def my_func(df1):
         return df1['b'] * 2.0
-    orca.add_injectable('test_func', my_func, clear_on='df1.b')
 
     # initial evaluation
     assert (orca.eval_injectable('test_func') == 2).all()
