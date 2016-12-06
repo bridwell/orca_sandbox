@@ -228,6 +228,12 @@ def test_table_wrappper():
     })
     orca.add_table('a_df', target)
 
+    # list the tables
+    the_tables = orca.list_tables()
+    assert len(the_tables) == 2
+    assert 'a_df' in the_tables
+    assert 'blah_df' in the_tables
+
     # evaluate the target table
     tab = orca.eval_injectable('a_df')
     expected = {
@@ -318,7 +324,7 @@ def test_update_table_columns():
 
 def test_run_simple():
     """
-    Simple test of step execution, doesn't write out anythin.
+    Simple test of step execution, doesn't write out anything.
 
     """
 
@@ -332,6 +338,11 @@ def test_run_simple():
     @orca.step('my_step2')
     def my_step2_func(test2):
         orca.add_injectable('test2', test2 + 1)
+
+    steps = orca.list_steps()
+    assert len(steps) == 2
+    assert 'my_step1' in steps
+    assert 'my_step2' in steps
 
     orca.run(
         steps=[

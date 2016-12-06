@@ -672,6 +672,24 @@ def list_attachments():
     return _attachments
 
 
+def list_tables():
+    """
+    Returns the names of registered tables.
+
+    """
+    return [t.name for t in
+            filter(lambda t: isinstance(t, TableWrapper), _injectables.values())]
+
+
+def list_steps():
+    """
+    Returns the names of registered steps.
+
+    """
+    return [s.name for s in
+            filter(lambda s: isinstance(s, StepFuncWrapper), _injectables.values())]
+
+
 def write_tables(fname, table_names=None, prefix=None):
     """
     Writes tables to a pandas.HDFStore file.
