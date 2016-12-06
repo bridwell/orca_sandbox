@@ -183,6 +183,8 @@ class CallbackWrapper(object):
     Not sure if that is the desired behavior. This would likely be used
     mostly in steps, so maybe that doesn't matter anyway.
 
+    Should we just move this into the funcwrapper?
+
     """
 
     def __init__(self, name, wrapped):
@@ -231,6 +233,25 @@ class FuncWrapper(object):
         if self._data is not None:
             self._data = None
             _notify_changed(self.name)
+
+
+class StepFuncWrapper(object):
+    """
+    Wraps a callable with side-effects...
+
+    Are there additional things we need here?
+
+    Like maybe the tables used by the step??
+
+    """
+
+    def __init__(self, name, wrapped):
+        self.name = name
+        self.func = _get_callable(wrapped)
+
+    def __call__(self, **local_kwargs):
+        kwargs = _do_collect(self.func, **local_kwargs)
+        return self.func(**kwargs)
 
 
 class ColumnWrapper(object):
@@ -605,6 +626,14 @@ def add_table(name, wrapped, attach_to=None, clear_on=None, columns=None):
     _notify_changed(name)
 
 
+def add_step(name, wrapped):
+    """
+    Adds a step to the environment.
+
+    """
+    _injectables[name] = StepFuncWrapper(name, wrapped)
+
+
 def get_injectable(name):
     """
     Returns an injectable.
@@ -643,12 +672,97 @@ def list_attachments():
     return _attachments
 
 
+def write_tables(fname, table_names=None, prefix=None):
+    """
+    Writes tables to a pandas.HDFStore file.
+
+    Parameters
+    ----------
+    fname : str
+        File name for HDFStore. Will be opened in append mode and closed
+        at the end of this function.
+    table_names: list of str, optional, default None
+        List of tables to write. If None, all registered tables will
+        be written.
+    prefix: str
+        If not None, used to prefix the output table names so that
+        multiple iterations can go in the same file.
+
+    """
+    if table_names is None:
+        table_names = list_tables()
+
+    tables = (get_table(t) for t in table_names)
+    key_template = '{}/{{}}'.format(prefix) if prefix is not None else '{}'
+
+    with pd.get_store(fname, mode='a') as store:
+        for t in tables:
+            store[key_template.format(t.name)] = t.to_frame()
+
+
+def run(steps, iter_vars=None, data_out=None, out_interval=1,
+        out_base_tables=None, out_run_tables=None):
+    """
+    Runs a sequence of steps. Mostly the same as the orca run
+    method?
+
+    A step can be a single entry or a tuple
+    in the form (name, iter_vars), where iter_vars is the
+    subset of years to run
+
+    TODO: add the write out methods.
+
+    ?? Allow a run to be given a name??
+
+    """
+
+    # clear out run cache
+    _notify_changed('run')
+
+    # add base write method here
+
+    # run the steps
+    iter_vars = iter_vars or [None]
+    # max_i = len(iter_vars)
+
+    for i, var in enumerate(iter_vars, start=1):
+
+        print 'on iteration: {}'.format(var)
+
+        # update iteration variables
+        _notify_changed('iteration')
+        add_injectable('iter_var', var)
+
+        # execture the step sequence
+        for s in steps:
+            curr_step = s
+
+            # ignore if the step is not available
+            # for the current iteration
+            if isinstance(s, tuple):
+                if var not in s[1]:
+                    continue
+                curr_step = s[0]
+
+            print '--executing: {}'.format(curr_step)
+
+            # update step variables
+            _notify_changed('step')
+
+            # execute the step
+            eval_injectable(curr_step)
+
+        # write out results
+        # TODO...
+
+
 ########################
 # DECORATORS
 # NEED TO THINK ABOUT HOW
 # TO MAKE IT EASIER TO DEFINE
 # CACHE CLEARING DEPENDENCIES??
 ########################
+
 
 def get_name(name, func):
     if name:
@@ -695,10 +809,22 @@ def column(name=None, attach_to=None, clear_on=None):
 def table(name=None, attach_to=None, clear_on=None, columns=None):
     """
     Decorates functions that will register
-    a column
+    a table
 
     """
     def decorator(func):
         add_table(get_name(name, func), func, attach_to, clear_on, columns)
+        return func
+    return decorator
+
+
+def step(name=None):
+    """
+    Decorates functions that will register
+    a step.
+
+    """
+    def decorator(func):
+        add_step(get_name(name, func), func)
         return func
     return decorator

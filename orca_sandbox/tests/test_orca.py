@@ -314,3 +314,32 @@ def test_update_table_columns():
     tab.update_col_from_series('b', to_update)
     expected = [10, 40, 10, 40]
     assert (orca.eval_injectable('test_func') == expected).all()
+
+
+def test_run_simple():
+    """
+    Simple test of step execution, doesn't write out anythin.
+
+    """
+
+    orca.add_injectable('test1', 10)
+    orca.add_injectable('test2', 20)
+
+    @orca.step()
+    def my_step1(test1):
+        orca.add_injectable('test1', test1 + 10)
+
+    @orca.step('my_step2')
+    def my_step2_func(test2):
+        orca.add_injectable('test2', test2 + 1)
+
+    orca.run(
+        steps=[
+            'my_step1',
+            ('my_step2', [2010, 2011])
+        ],
+        iter_vars=[2010, 2011, 2012]
+    )
+
+    assert orca.eval_injectable('test1') == 40
+    assert orca.eval_injectable('test2') == 22
