@@ -690,7 +690,43 @@ def list_steps():
             filter(lambda s: isinstance(s, StepFuncWrapper), _injectables.values())]
 
 
-def write_tables(fname, table_names=None, prefix=None):
+def load_tables(hdf_file, prefix=None, remove_prefix=True):
+    """
+    Opens an hdf file and registers all the tables with orca.
+
+    Parameters:
+    -----------
+    hdf_file: string
+        Full path to the hdf file containing the tables.
+    prefix: str
+        Prefix to filter the tables to load.
+    remove_prefix: bool, optional, default True
+        If True, the prefix will be removed from the table name when registering.
+        e.g. '/base/households' will be registered as 'households'.
+        If False, the first '/' is removed but the rest if the prefix remains,
+        e.g. '/base/housholds' will be registered as 'base/households'
+
+    """
+
+    # format the prefix filter, this assumes all tables in the store start with '/'
+    key_template = '{}/'.format(prefix) if prefix is not None else '/'
+    if not key_template.startswith('/'):
+        key_template = '/{}'.format(key_template)
+
+    with pd.get_store(hdf_file, mode='r') as store:
+        for t in store.keys():
+            if t.startswith(key_template):
+                orca_name = t
+
+                if remove_prefix:
+                    orca_name = t[len(key_template):]
+                else:
+                    orca_name = t[1:]
+
+                add_table(orca_name, store[t])
+
+
+def write_tables(fname, table_names=None, prefix=None, write_attached=False):
     """
     Writes tables to a pandas.HDFStore file.
 
@@ -705,17 +741,23 @@ def write_tables(fname, table_names=None, prefix=None):
     prefix: str
         If not None, used to prefix the output table names so that
         multiple iterations can go in the same file.
+    write_attached: bool, optional, default False
+        If True, all columns are written out. If False, only the
+        local columns will be written.
 
     """
     if table_names is None:
         table_names = list_tables()
 
-    tables = (get_table(t) for t in table_names)
+    tables = (get_injectable(t) for t in table_names)
     key_template = '{}/{{}}'.format(prefix) if prefix is not None else '{}'
 
     with pd.get_store(fname, mode='a') as store:
         for t in tables:
-            store[key_template.format(t.name)] = t.to_frame()
+            if write_attached:
+                store[key_template.format(t.name)] = t.to_frame()
+            else:
+                store[key_template.format(t.name)] = t.local
 
 
 def run(steps, iter_vars=None, data_out=None, out_interval=1,

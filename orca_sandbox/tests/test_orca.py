@@ -1,3 +1,5 @@
+import os
+import tempfile
 import pytest
 import numpy as np
 import pandas as pd
@@ -354,3 +356,77 @@ def test_run_simple():
 
     assert orca.eval_injectable('test1') == 40
     assert orca.eval_injectable('test2') == 22
+
+
+@pytest.fixture
+def store_name(request):
+    fname = tempfile.NamedTemporaryFile(suffix='.h5').name
+
+    def fin():
+        if os.path.isfile(fname):
+            os.remove(fname)
+    request.addfinalizer(fin)
+
+    return fname
+
+
+def test_write_load_tables(store_name):
+    orca.clear_all()
+
+    # add some tables
+    orca.add_table(
+        'tab1',
+        pd.DataFrame({
+            'a': np.ones(4),
+            'b': np.zeros(4)
+        })
+    )
+    orca.add_column(
+        'col1',
+        pd.Series(
+            np.random.randint(0, 10, 4)
+        ),
+        attach_to='tab1'
+    )
+
+    orca.add_table(
+        'tab2',
+        pd.DataFrame({
+            'c': np.random.rand(5),
+            'd': np.random.rand(5)
+        })
+    )
+
+    # write out tables a couple different ways
+    orca.write_tables(store_name, write_attached=True)
+    orca.write_tables(store_name, ['tab1'], 2010)
+    orca.write_tables(store_name, ['tab2'], 2020)
+
+    # check the store
+    with pd.get_store(store_name, mode='r') as store:
+        assert 'tab1' in store
+        assert 'tab2' in store
+        assert '2010/tab1' in store
+        assert '2020/tab2' in store
+
+        assert 'col1' in store['tab1'].columns
+        assert 'col1' not in store['2010/tab1'].columns
+
+    # test loading everything
+    orca.clear_all()
+    orca.load_tables(store_name)
+    t = orca.list_tables()
+    assert 'tab1' in t
+    assert 'tab2' in t
+    assert '2010/tab1' in t
+    assert '2020/tab2' in t
+
+    # test loading one year
+    orca.clear_all()
+    orca.load_tables(store_name, 2020)
+    assert orca.list_tables() == ['tab2']
+
+    # test loading one year, w/out removing prefix
+    orca.clear_all()
+    orca.load_tables(store_name, 2020, False)
+    assert orca.list_tables() == ['2020/tab2']
