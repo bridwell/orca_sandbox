@@ -5,7 +5,8 @@ simulation orchestration framework.
 This is very experimental.
 
 """
-
+import os
+import time
 import inspect
 import pandas as pd
 
@@ -251,7 +252,9 @@ class StepFuncWrapper(object):
 
     def __call__(self, **local_kwargs):
         kwargs = _do_collect(self.func, **local_kwargs)
-        return self.func(**kwargs)
+        result = self.func(**kwargs)
+        _notify_changed(self.name)
+        return result
 
 
 class ColumnWrapper(object):
@@ -690,38 +693,69 @@ def list_steps():
             filter(lambda s: isinstance(s, StepFuncWrapper), _injectables.values())]
 
 
-def load_tables(hdf_file, prefix=None, remove_prefix=True):
+def load_tables(hdf_file, prefix='*', basenames=None, remove_prefix=False):
     """
     Opens an hdf file and registers all the tables with orca.
 
     Parameters:
     -----------
-    hdf_file: string
+    hdf_file: string,
         Full path to the hdf file containing the tables.
-    prefix: str
-        Prefix to filter the tables to load.
-    remove_prefix: bool, optional, default True
-        If True, the prefix will be removed from the table name when registering.
-        e.g. '/base/households' will be registered as 'households'.
-        If False, the first '/' is removed but the rest if the prefix remains,
-        e.g. '/base/housholds' will be registered as 'base/households'
+    prefix: str, optional default *
+        Prefix to filter in the tables to load. By default load everything.
+    basenames: list of str, optional, default None
+        Indicates specific tables to load, e.g. ['households', 'buildings'].
+    remove_prefix: boolm optional, default False
+        If True, the prefix will be removed from the table name when registering,
+        e.g. '/2020/households' is registered as 'households'.
+        Note: it might be dangerous to remove the prefix if a strict prefix filter is
+        not provided as there may be multiple tables with the same basename.
+
+    TODO: maybe look into some regex functions to clean up the logic?
 
     """
+    # evaluate and format the prefix filter
+    strict_prefix = True
+    prefix = str(prefix)
 
-    # format the prefix filter, this assumes all tables in the store start with '/'
-    key_template = '{}/'.format(prefix) if prefix is not None else '/'
-    if not key_template.startswith('/'):
-        key_template = '/{}'.format(key_template)
+    if not prefix.startswith('/'):
+        # treat 2010 the same as /2010
+        prefix = '/' + prefix
+
+    if prefix.endswith('*'):
+        # handle wildcard filters
+        strict_prefix = False
+        prefix = prefix[:len(prefix) - 1]
+
+    if len(prefix) > 1 and prefix.endswith('/'):
+        # treat 2010 the same as 2010/
+        prefix = prefix[:len(prefix) - 1]
 
     with pd.get_store(hdf_file, mode='r') as store:
+
         for t in store.keys():
-            if t.startswith(key_template):
+            t_base = os.path.basename(t)
+            t_dir = os.path.dirname(t)
+            do_load = True
+
+            # check the prefix
+            if strict_prefix:
+                if prefix != t_dir:
+                    do_load = False
+            else:
+                if not t.startswith(prefix):
+                    do_load = False
+
+            # check the base tables
+            if basenames is not None and t_base not in basenames:
+                do_load = False
+
+            # load in the table
+            if do_load:
                 orca_name = t
 
                 if remove_prefix:
-                    orca_name = t[len(key_template):]
-                else:
-                    orca_name = t[1:]
+                    orca_name = t_base
 
                 add_table(orca_name, store[t])
 
@@ -761,7 +795,7 @@ def write_tables(fname, table_names=None, prefix=None, write_attached=False):
 
 
 def run(steps, iter_vars=None, data_out=None, out_interval=1,
-        out_base_tables=None, out_run_tables=None):
+        out_base_tables=None, out_run_tables=None, write_attached=False):
     """
     Runs a sequence of steps. Mostly the same as the orca run
     method?
@@ -770,24 +804,26 @@ def run(steps, iter_vars=None, data_out=None, out_interval=1,
     in the form (name, iter_vars), where iter_vars is the
     subset of years to run
 
-    TODO: add the write out methods.
-
-    ?? Allow a run to be given a name??
+    Note: right now, the tables must be specified to be writted,
+    tables are not inferred from the steps.
 
     """
 
     # clear out run cache
     _notify_changed('run')
 
-    # add base write method here
+    # write out the base
+    if data_out and out_base_tables:
+        write_tables(data_out, out_base_tables, 'base', write_attached)
 
     # run the steps
     iter_vars = iter_vars or [None]
-    # max_i = len(iter_vars)
+    max_i = len(iter_vars)
 
     for i, var in enumerate(iter_vars, start=1):
 
         print 'on iteration: {}'.format(var)
+        iter_time = time.time()
 
         # update iteration variables
         _notify_changed('iteration')
@@ -805,6 +841,7 @@ def run(steps, iter_vars=None, data_out=None, out_interval=1,
                 curr_step = s[0]
 
             print '--executing: {}'.format(curr_step)
+            step_time = time.time()
 
             # update step variables
             _notify_changed('step')
@@ -812,8 +849,14 @@ def run(steps, iter_vars=None, data_out=None, out_interval=1,
             # execute the step
             eval_injectable(curr_step)
 
+            print '---time: {:.2f} s'.format(time.time() - step_time)
+
         # write out results
-        # TODO...
+        if data_out and out_run_tables:
+            if (i - 1) % out_interval == 0 or i == max_i:
+                write_tables(data_out, out_run_tables, var, write_attached)
+
+        print '---time: {:.2f} s'.format(time.time() - iter_time)
 
 
 ########################

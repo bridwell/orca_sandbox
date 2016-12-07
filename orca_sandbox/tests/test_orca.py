@@ -373,6 +373,10 @@ def store_name(request):
 def test_write_load_tables(store_name):
     orca.clear_all()
 
+    #######################
+    # TEST WRITING TABLES
+    #######################
+
     # add some tables
     orca.add_table(
         'tab1',
@@ -412,21 +416,36 @@ def test_write_load_tables(store_name):
         assert 'col1' in store['tab1'].columns
         assert 'col1' not in store['2010/tab1'].columns
 
-    # test loading everything
-    orca.clear_all()
-    orca.load_tables(store_name)
-    t = orca.list_tables()
-    assert 'tab1' in t
-    assert 'tab2' in t
-    assert '2010/tab1' in t
-    assert '2020/tab2' in t
+    #######################
+    # TEST LOADING TABLES
+    #######################
 
-    # test loading one year
-    orca.clear_all()
-    orca.load_tables(store_name, 2020)
-    assert orca.list_tables() == ['tab2']
+    def assert_load_tables(expected_tabs, *args, **kwargs):
+        """
+        Compares expected tables with the tables that
+        get registered via differet arg inputs.
+        """
+        orca.clear_all()
+        orca.load_tables(*args, **kwargs)
+        o_tabs = orca.list_tables()
 
-    # test loading one year, w/out removing prefix
-    orca.clear_all()
-    orca.load_tables(store_name, 2020, False)
-    assert orca.list_tables() == ['2020/tab2']
+        assert len(o_tabs) == len(expected_tabs)
+        for t in expected_tabs:
+            assert t in o_tabs
+
+    # test 1- ways to load the whole store
+    e_tabs = ['/tab1', '/tab2', '/2010/tab1', '/2020/tab2']
+    assert_load_tables(e_tabs, store_name)
+    assert_load_tables(e_tabs, store_name, '/*')
+
+    # test 2 - apply pre-fix filters different ways
+    assert_load_tables(['/2010/tab1'], store_name, '2010')
+    assert_load_tables(['/2010/tab1'], store_name, '/2010')
+    assert_load_tables(['tab1'], store_name, '2010/', remove_prefix=True)
+    assert_load_tables(['/tab1', '/tab2'], store_name, '/')
+
+    # test 3 - query by base table name
+    assert_load_tables(['/tab1', '/2010/tab1'], store_name, basenames=['tab1'])
+
+    # test 4 - query by prefix and basetables
+    assert_load_tables(['tab1'], store_name, prefix='/', basenames=['tab1'], remove_prefix=True)
