@@ -443,9 +443,67 @@ def test_write_load_tables(store_name):
     assert_load_tables(['/2010/tab1'], store_name, '/2010')
     assert_load_tables(['tab1'], store_name, '2010/', remove_prefix=True)
     assert_load_tables(['/tab1', '/tab2'], store_name, '/')
+    assert_load_tables([], store_name, '/2030*')
 
     # test 3 - query by base table name
     assert_load_tables(['/tab1', '/2010/tab1'], store_name, basenames=['tab1'])
 
     # test 4 - query by prefix and basetables
     assert_load_tables(['tab1'], store_name, prefix='/', basenames=['tab1'], remove_prefix=True)
+
+
+def test_run_and_write(store_name):
+    orca.clear_all()
+
+    @orca.table()
+    def a_table():
+        return pd.DataFrame({'col1': np.zeros(1)})
+
+    @orca.table()
+    def b_table():
+        return pd.DataFrame({'my_col': ['a', 'b', 'c']})
+
+    @orca.table()
+    def c_table():
+        return pd.DataFrame({'r': np.random.rand(4)})
+
+    @orca.step()
+    def plus1(a_table):
+        orca.add_table(
+            'a_table', a_table.to_frame() + 1)
+
+    tabs = orca.list_tables()
+
+    orca.run(
+        ['plus1'],
+        range(2015, 2021),
+        data_out=store_name,
+        out_interval=2,
+        out_base_tables=['a_table', 'b_table', 'c_table'],
+        out_run_tables=['a_table']
+    )
+
+    # check the base tables output
+    orca.clear_all()
+    orca.load_tables(store_name, prefix='base', remove_prefix=True)
+    o_tabs = orca.list_tables()
+    assert len(o_tabs) == 3
+    for t in tabs:
+        assert t in o_tabs
+
+    # check the run tables output
+    orca.clear_all()
+    orca.load_tables(store_name, basenames=['a_table'])
+    o_tabs = orca.list_tables()
+    assert len(o_tabs) == 5
+
+    def check_sums(y, total):
+        name = '/{}/a_table'.format(y)
+        df = orca.eval_injectable(name).local
+        assert df['col1'].sum() == total
+
+    check_sums('base', 0)
+    check_sums(2015, 1)
+    check_sums(2017, 3)
+    check_sums(2019, 5)
+    check_sums(2020, 6)
