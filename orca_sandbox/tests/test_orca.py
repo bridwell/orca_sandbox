@@ -323,6 +323,10 @@ def test_update_table_columns():
     expected = [10, 40, 10, 40]
     assert (orca.eval_injectable('test_func') == expected).all()
 
+    # update the entire table
+    orca.add_injectable('df1', pd.concat([tab.local, tab.local]))
+    assert len(orca.eval_injectable('test_func')) == 8
+
 
 def test_run_simple():
     """

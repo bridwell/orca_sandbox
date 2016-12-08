@@ -69,6 +69,15 @@ def _register_clear_events(func, clear_on):
     if 'env' not in clear_on:
         clear_on = ['env'] + clear_on
 
+    # if the the clear on has ., also register the left hand side
+    # intended so that injectables depending on columns also depend
+    # on the table
+    more_clears = set()
+    for c in clear_on:
+        if '.' in c:
+            more_clears.add(c.split('.')[0])
+    clear_on += list(more_clears)
+
     subscribe_to_events(_events, clear_on, func, collect_inputs)
 
 
