@@ -23,7 +23,7 @@ def _init_globals():
     Initializes module-level variables.
 
     """
-    global _injectables, _events, _attachments, broadcasts
+    global _injectables, _events, _attachments
     _injectables = {}
     _attachments = {}
     _events = init_events(['env', 'run', 'iteration', 'step', 'collect'])
@@ -657,6 +657,7 @@ class TableWrapper(object):
         self.local[column_name] = series
 
         # notify changes, assume event named <table_name>.<column_name>
+        _notify_changed('{}.*'.format(self.name))
         _notify_changed('{}.{}'.format(self.name, column_name))
 
     def __setitem__(self, key, value):
