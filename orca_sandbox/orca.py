@@ -23,9 +23,10 @@ def _init_globals():
     Initializes module-level variables.
 
     """
-    global _injectables, _events, _attachments
+    global _injectables, _events, _attachments, _attached
     _injectables = {}
-    _attachments = {}
+    _attachments = {}  # keyed by the tables attached to
+    _attached = {}     # keyed by the tables attached from
     _events = init_events(['env', 'run', 'iteration', 'step', 'collect'])
 
 
@@ -245,12 +246,22 @@ def _attach(name, attach_to):
         return
 
     def attach(target_name):
+        # 1st attach to
         if target_name in _attachments:
             a = _attachments[target_name]
         else:
             a = set()
             _attachments[target_name] = a
         a.add(name)
+
+        # next attach from
+        if name in _attached:
+            print 'attaching to {}'.format(name)
+            a2 = _attached[name]
+        else:
+            a2 = set()
+            _attached[name] = a2
+        a2.add(target_name)
 
     if isinstance(attach_to, list):
         for target_name in attach_to:
@@ -341,6 +352,11 @@ class FuncWrapper(object):
         if self._data is not None:
             self._data = None
             _notify_changed(self.name)
+
+            # notify things this is attached to?
+            if self.name in _attached:
+                for a in _attached[self.name]:
+                    _notify_changed('{}.*'.format(a))
 
 
 class StepFuncWrapper(object):
