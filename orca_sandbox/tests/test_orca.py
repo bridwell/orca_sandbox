@@ -38,6 +38,80 @@ def my_class():
     return my_class
 
 
+def test_register_clear_events(my_func2):
+    orca.clear_all()
+
+    # test w/ no clear events
+    orca._register_clear_events(my_func2, None)
+    assert my_func2 in orca._events['env'].subscribers
+
+    # test with a single event
+    orca._register_clear_events(my_func2, 'test1')
+    assert my_func2 in orca._events['test1'].subscribers
+
+    # test with an attachment
+    orca._register_clear_events(my_func2, 'table.column')
+    assert my_func2 in orca._events['table'].subscribers
+    assert my_func2 in orca._events['table.column'].subscribers
+
+
+def test_get_args():
+
+    def f(a, b, c=10):
+        return
+
+    args, defaults = orca._get_func_args(f)
+    assert args == ['a', 'b', 'c']
+    assert defaults == {'c': 10}
+
+
+def test_collect_inputs():
+
+    orca.clear_all()
+    orca.add_injectable('a', 100)
+    orca.add_injectable('b', 200)
+    orca.add_injectable('one', 1)
+    orca.add_injectable('two', 2)
+
+    def a_plus_b(a, b):
+        return a + b
+
+    # test 1 - a function with arguments that match injected
+    kwargs = orca._collect_inputs(a_plus_b)
+    assert kwargs == {'a': 100, 'b': 200}
+
+    # test 2 - with argmap
+    arg_map = {'a': 'one', 'b': 'two'}
+    kwargs = orca._collect_inputs(a_plus_b, arg_map)
+    assert kwargs == {'a': 1, 'b': 2}
+
+    # test 3 - with local kwargs
+    kwargs = orca._collect_inputs(a_plus_b, **{'a': 10, 'b': 20})
+    assert kwargs == {'a': 10, 'b': 20}
+
+    # test 4 - arguments not found
+    orca.clear_all()
+    with pytest.raises(ValueError):
+        orca._collect_inputs(a_plus_b)
+
+
+def test_get_callable(my_func2, my_class):
+    orca.clear_all()
+
+    # function
+    f = orca._get_callable(my_func2)
+    assert f.__name__ == my_func2.__name__
+
+    # class
+    orca.add_injectable('value_test1', 10)
+    f = orca._get_callable(my_class)
+    assert f.__name__ == '__call__'
+
+    # a non-function
+    with pytest.raises(ValueError):
+        orca._get_callable(10)
+
+
 def test_injectables(a_value, my_func, my_func2, my_class):
     """
     Test wrapping values and functions,
