@@ -11,7 +11,7 @@ import inspect
 import pandas as pd
 
 from .events import *
-from .collector import *
+# from .collector import *
 
 
 ########################
@@ -23,7 +23,7 @@ def _init_globals():
     Initializes module-level variables.
 
     """
-    global _injectables, _events, _attachments
+    global _injectables, _events, _attachments, broadcasts
     _injectables = {}
     _attachments = {}
     _events = init_events(['env', 'run', 'iteration', 'step', 'collect'])
@@ -44,6 +44,7 @@ def _notify_changed(name):
         The name of the event to fire.
 
     """
+    print '{} was fired!'.format(name)
     if name in _events:
         _events[name]()
 
@@ -78,16 +79,112 @@ def _register_clear_events(func, clear_on):
             more_clears.add(c.split('.')[0])
     clear_on += list(more_clears)
 
-    subscribe_to_events(_events, clear_on, func, collect_inputs)
+    subscribe_to_events(_events, clear_on, func, _collect_inputs)
 
 
-def _do_collect(func, **kwargs):
+def _get_func_args(func):
     """
-    Collects inputs required by the function,
-    given the current collection of injectables.
+    Returns a function's argument names and defaults.
+
+    Parameters:
+    -----------
+    func: callable
+        The function/callable to inspect.
+
+    Returns:
+    --------
+    arg_names: list of str
+        List of argument names.
+    default_kwargs:
+        Dictionary of default values. Keyed by the argument name.
+    """
+
+    # get function arguments
+    spec = inspect.getargspec(func)
+    args = spec.args
+
+    # get defaults
+    defaults = spec.defaults
+
+    # get keyword args for the function's default values
+    default_kwargs = {}
+    if defaults is not None:
+        kw_start_idx = len(args) - len(defaults)
+        default_kwargs = dict(zip([key for key in args[kw_start_idx:]], list(defaults)))
+
+    return args, default_kwargs
+
+
+def _collect_inputs(func, arg_map={}, **local_kwargs):
+    """
+    Collect the inputs needed to execute a function.
+
+    ** STILL NEED TO FIGURE OUT WAHT TO DO WITH DEFAULTS???
+
+    Parameters:
+    -----------
+    func: callable:
+        The function callable to execute.
+    arg_map: dict, optional, default {}
+        Dictionary that maps between the argument
+        names of the function (keys) and the corresponding
+        injectables (values).
+        For example:
+            def my_func(a):
+                ...
+            arg_map = {'a': 'my_injectable'}
+        Would substitute argument 'a' with the value provided by
+        'my_injectable.'
+    **kwargs:
+        Optional keyword arguments to provide to the function.
+        These will overide any injected values.
+
+    Returns:
+    --------
+    Named keyword arg dictionary that can be passed to execute the function.
 
     """
-    return collect_inputs(func, _injectables, **kwargs)
+    kwargs = {}
+
+    print arg_map
+
+    # get function signature
+    arg_names, defaults = _get_func_args(func)
+
+    # if no args are needed by the function then we're done
+    if len(arg_names) == 0:
+        return kwargs
+
+    # loop the through the function args and find the matching input
+    for a in arg_names:
+
+        if a == 'self':
+            # call coming from a class, ignore
+            continue
+
+        # local inputs (i.e. keywords from the calling function)
+        if a in local_kwargs:
+            kwargs[a] = local_kwargs[a]
+            continue
+
+        # fetch from injectables
+        name = a
+        if a in arg_map:
+            name = arg_map[a]
+
+        if name in _injectables:
+            inj = _injectables[name]
+
+            if callable(inj):
+                inj = inj()
+
+            kwargs[a] = inj
+            continue
+
+        # argument not found
+        raise ValueError("Argument {} not found".format(a))
+
+    return kwargs
 
 
 def _get_callable(wrapped):
@@ -114,14 +211,14 @@ def _get_callable(wrapped):
         return wrapped
     elif callable(wrapped):
         # a class is wrapped, need to create an instance first
-        init_kwargs = _do_collect(wrapped.__init__)
+        init_kwargs = _collect_inputs(wrapped.__init__)
         obj = wrapped(**init_kwargs)
         return obj.__call__
     else:
         raise ValueError('The wrapped argument must be a function or callable class.')
 
 
-def _create_injectable(name, wrapped, clear_on=None, autocall=True):
+def _create_injectable(name, wrapped, clear_on=None, autocall=True, arg_map={}):
     """
     Creates an injectable from a provided value or function.
 
@@ -132,9 +229,9 @@ def _create_injectable(name, wrapped, clear_on=None, autocall=True):
     if not autocall:
         return CallbackWrapper(name, wrapped)
     if clear_on:
-        return FuncWrapper(name, wrapped, clear_on)
+        return FuncWrapper(name, wrapped, clear_on, arg_map)
     else:
-        return FuncWrapper(name, wrapped, 'collect')
+        return FuncWrapper(name, wrapped, 'collect', arg_map)
 
 
 def _attach(name, attach_to):
@@ -213,9 +310,10 @@ class FuncWrapper(object):
 
     """
 
-    def __init__(self, name, wrapped, clear_on):
+    def __init__(self, name, wrapped, clear_on, arg_map={}):
         self.name = name
         self.func = _get_callable(wrapped)
+        self.arg_map = arg_map
 
         # set up caching
         self._data = None
@@ -229,12 +327,12 @@ class FuncWrapper(object):
         # if kwargs are provided, do a temporary evaluation
         # any cached data will be reverted to on the next call
         if len(local_kwargs) > 0:
-            kwargs = _do_collect(self.func, **local_kwargs)
+            kwargs = _collect_inputs(self.func, self.arg_map, **local_kwargs)
             return self.func(**kwargs)
 
         # evaluate the function if not cached
         if self._data is None:
-            kwargs = _do_collect(self.func)
+            kwargs = _collect_inputs(self.func, self.arg_map)
             self._data = self.func(**kwargs)
 
         return self._data
@@ -260,7 +358,7 @@ class StepFuncWrapper(object):
         self.func = _get_callable(wrapped)
 
     def __call__(self, **local_kwargs):
-        kwargs = _do_collect(self.func, **local_kwargs)
+        kwargs = _collect_inputs(self.func, **local_kwargs)
         result = self.func(**kwargs)
         _notify_changed(self.name)
         return result
@@ -272,13 +370,13 @@ class ColumnWrapper(object):
 
     """
 
-    def __init__(self, name, wrapped, clear_on=None, attach_to=None):
+    def __init__(self, name, wrapped, clear_on=None, attach_to=None, arg_map={}):
 
         # TODO: if cached, make sure attachments are in clear events?
 
         # create the injectable
         self.name = name
-        self._injectable = _create_injectable(name, wrapped, clear_on)
+        self._injectable = _create_injectable(name, wrapped, clear_on, arg_map=arg_map)
 
         # add attachments
         _attach(name, attach_to)
@@ -297,11 +395,11 @@ class TableWrapper(object):
     """
 
     def __init__(self, name, wrapped,
-                 clear_on=None, attach_to=None, columns=None):
+                 clear_on=None, attach_to=None, columns=None, arg_map={}):
 
         # create the injectable
         self.name = name
-        self._injectable = _create_injectable(name, wrapped, clear_on)
+        self._injectable = _create_injectable(name, wrapped, clear_on, arg_map=arg_map)
         self._local_columns = columns
 
         # add attachments
@@ -559,7 +657,6 @@ class TableWrapper(object):
         self.local[column_name] = series
 
         # notify changes, assume event named <table_name>.<column_name>
-        # this needs to be tested!!
         _notify_changed('{}.{}'.format(self.name, column_name))
 
     def __setitem__(self, key, value):
@@ -612,29 +709,23 @@ def clear_cache():
     _notify_changed('env')
 
 
-def add_injectable(name, wrapped, clear_on=None, autocall=True):
+def add_injectable(name, wrapped, clear_on=None, autocall=True, arg_map={}):
     """
     Adds a wrapped value or function as an injectable.
 
     """
-    _injectables[name] = _create_injectable(name, wrapped, clear_on, autocall)
+    _injectables[name] = _create_injectable(name, wrapped, clear_on, autocall, arg_map)
     _notify_changed(name)
 
 
-def add_column(name, wrapped, attach_to=None, clear_on=None):
-    # TODO: do we need to un-register attachments?
-
-    _injectables[name] = ColumnWrapper(name, wrapped, clear_on, attach_to)
+def add_column(name, wrapped, attach_to=None, clear_on=None, arg_map={}):
+    _injectables[name] = ColumnWrapper(name, wrapped, clear_on, attach_to, arg_map)
     _notify_changed(name)
 
 
-def add_table(name, wrapped, attach_to=None, clear_on=None, columns=None):
-    # TODO: do we need to un-register attachments?
-    # TODO: notify changed all events starting with the table name
-    # i.e. buildings.col1, buildings.col2
-
+def add_table(name, wrapped, attach_to=None, clear_on=None, columns=None, arg_map={}):
     _injectables[name] = TableWrapper(
-        name, wrapped, clear_on, attach_to, columns)
+        name, wrapped, clear_on, attach_to, columns, arg_map)
     _notify_changed(name)
 
 
@@ -940,3 +1031,8 @@ def step(name=None):
         add_step(get_name(name, func), func)
         return func
     return decorator
+
+
+################################
+# BROADCASTING / RELATIONSHIPS
+################################
