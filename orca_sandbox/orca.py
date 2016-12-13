@@ -12,6 +12,7 @@ import pandas as pd
 
 from .events import *
 # from .collector import *
+from smartpy_core.wrangling import *
 
 
 ########################
@@ -1098,3 +1099,57 @@ def step(name=None):
 ################################
 # BROADCASTING / RELATIONSHIPS
 ################################
+
+
+def right_to_left(right, left, left_fk, cols):
+    """
+    Generic broadcasting function to wrap.
+
+    Parameters:
+    -----------
+    right: data frame wrapper we are broadcasting from
+    left: data frame wrapper we are broadcasting to
+    left_fk: column on the left wrapper to serve as the foreign key
+    right_cols: optional, subset of columns to broadcast from the right
+
+    """
+    return broadcast(right.to_frame(cols), left[left_fk])
+
+
+def add_broadcast(cast, onto, fk, cols=None):
+    """
+    Creates a broadcast injectables between two tables.
+
+    cast: str
+        Name of the data frame wrapper to broadcast from.
+    onto: str
+        Name of the data frame wrapper to broadcast to.
+    fk: str
+        Name of the column into the onto wrapper to
+        server as the foreign key.
+    cols: str, optional, default None
+        Optional subset of columns in the cast wrapper to
+        broadcast. If not provided, all columns are available.
+    """
+
+    # set up the inputs
+    name = '_broadcast_{}_to_{}'.format(cast, onto)
+    fk_name = '{}_FK'.format(name)
+    cols_name = '{}_COLS'.format(name)
+    arg_map = {
+        'right': cast,
+        'left': onto,
+        'left_fk': fk_name,
+        'cols': cols_name
+    }
+    add_injectable(fk_name, fk)
+    add_injectable(cols_name, cols)
+
+    # create the table wrapper
+    add_table(
+        name,
+        right_to_left,
+        attach_to=onto,
+        clear_on=['{}.*'.format(cast), '{}.{}'.format(onto, fk)],
+        arg_map=arg_map
+    )
