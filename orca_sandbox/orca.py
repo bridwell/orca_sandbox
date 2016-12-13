@@ -35,7 +35,21 @@ def _init_globals():
 _init_globals()
 
 
-def _notify_changed(name):
+def _parse_name(name):
+    table_name = name
+    column_name = None
+
+    if '.' in name:
+        parts = name.split('.')
+        if len(parts) != 2:
+            raise ValueError('{} is an invalid injectable name'.format(name))
+        table_name = parts[0]
+        column_name = parts[1]
+
+    return table_name, column_name
+
+
+def _notify_changed(name, source_name=None):
     """
     Notifies all subscribers of a state change.
 
@@ -43,11 +57,49 @@ def _notify_changed(name):
     -----------
     name: str
         The name of the event to fire.
+    source_name: str
+        Name of the originating event in the firing
+        chain. Used to propagate column changes across chained
+        injectables. If the event name is a column
+        (e.g. zones.MPA), the column name will
+        be retained and the table name substituted
+        for each attached table.
 
     """
-    print '{} was fired!'.format(name)
-    if name in _events:
-        _events[name]()
+
+    # set the source name if this is the 1st call in the chain
+    if source_name is None:
+        source_name = name
+
+    # get the injectable components
+    table_name, column_name = _parse_name(name)
+
+    def notify(table_name, column_name):
+
+        # format the event name
+        name = table_name
+        if column_name is not None:
+            if column_name != '*':
+                # also fire the wildcard
+                notify(table_name, '*')
+            name = '{}.{}'.format(table_name, column_name)
+
+        # fire the events
+        print 'firing {}'.format(name)
+        if name in _events:
+            _events[name](source_name)
+
+    # notify direct listening injectables
+    notify(table_name, column_name)
+
+    # notify downstream injectables
+    # this needs some tests written!
+    if name in _attached and source_name is not None:
+        f_table_name, f_column_name = _parse_name(source_name)
+
+        if f_column_name is not None:
+            for a_name in _attached[name]:
+                notify(a_name, f_column_name)
 
 
 def _register_clear_events(func, clear_on):
@@ -80,7 +132,7 @@ def _register_clear_events(func, clear_on):
             more_clears.add(c.split('.')[0])
     clear_on += list(more_clears)
 
-    subscribe_to_events(_events, clear_on, func, _collect_inputs)
+    subscribe_to_events(_events, clear_on, func)
 
 
 def _get_func_args(func):
@@ -146,8 +198,6 @@ def _collect_inputs(func, arg_map={}, **local_kwargs):
 
     """
     kwargs = {}
-
-    print arg_map
 
     # get function signature
     arg_names, defaults = _get_func_args(func)
@@ -348,15 +398,11 @@ class FuncWrapper(object):
 
         return self._data
 
-    def clear_cache(self):
+    def clear_cache(self, forward):
         if self._data is not None:
+            print 'clearing cache for {}'.format(self.name)
             self._data = None
-            _notify_changed(self.name)
-
-            # notify things this is attached to?
-            if self.name in _attached:
-                for a in _attached[self.name]:
-                    _notify_changed('{}.*'.format(a))
+            _notify_changed(self.name, forward)
 
 
 class StepFuncWrapper(object):
@@ -673,7 +719,6 @@ class TableWrapper(object):
         self.local[column_name] = series
 
         # notify changes, assume event named <table_name>.<column_name>
-        _notify_changed('{}.*'.format(self.name))
         _notify_changed('{}.{}'.format(self.name, column_name))
 
     def __setitem__(self, key, value):
